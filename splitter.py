@@ -8,7 +8,6 @@ def run_ffmpeg(args):
     subprocess.run(command, check=True)
 
 def normalize_video(input_path, output_path):
-    # Scales to 1080x1920, pads with black bars to maintain aspect ratio, forces 30 FPS
     vf = "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,fps=30,setsar=1"
     run_ffmpeg([
         "-i", str(input_path), 
@@ -42,22 +41,31 @@ def concat_videos(video_paths, output_path):
     list_file.unlink()
 
 def main():
-    parser = argparse.ArgumentParser(description="Split and normalize videos for Instagram.")
-    parser.add_argument("folder", type=Path, help="Directory containing mp4 files")
+    parser = argparse.ArgumentParser(description="Video Splitting Suite")
     
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--continuous", action="store_true", help="Merge all videos, then split.")
-    group.add_argument("--individual", action="store_true", help="Split each video individually.")
+    group.add_argument("--continuous", action="store_true", help="Merge selected videos, then split.")
+    group.add_argument("--individual", action="store_true", help="Split selected videos individually.")
     
-    parser.add_argument("--precise", action="store_true", help="Re-encode to ensure exact 60s cuts.")
-    parser.add_argument("--normalize", action="store_true", help="Standardize resolution and framerate before processing.")
+    parser.add_argument("--files", nargs="+", help="Specific files to process in raw_videos. Dictates order.")
+    parser.add_argument("--precise", action="store_true", help="Re-encode for exact 60s cuts.")
+    parser.add_argument("--normalize", action="store_true", help="Standardize resolution and framerate.")
     args = parser.parse_args()
 
-    folder = args.folder
-    videos = sorted([p for p in folder.glob("*.mp4") if not p.name.startswith("out_") and p.name != "merged.mp4"])
+    input_dir = Path("raw_videos")
+    output_dir = Path("split_videos")
+    
+    # Create directories if they do not exist
+    input_dir.mkdir(exist_ok=True)
+    output_dir.mkdir(exist_ok=True)
+
+    if args.files:
+        videos = [input_dir / f for f in args.files if (input_dir / f).exists()]
+    else:
+        videos = sorted(list(input_dir.glob("*.mp4")))
 
     if not videos:
-        print("No mp4 files found.")
+        print("No valid mp4 files found in raw_videos.")
         return
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -73,7 +81,7 @@ def main():
 
         if args.continuous:
             merged_path = temp_dir_path / "merged.mp4"
-            out_pattern = folder / "out_continuous_%03d.mp4"
+            out_pattern = output_dir / "out_continuous_%03d.mp4"
             
             concat_videos(working_videos, merged_path)
             split_video(merged_path, out_pattern, args.precise)
@@ -81,7 +89,7 @@ def main():
         elif args.individual:
             for i, video in enumerate(working_videos):
                 original_name = videos[i].stem
-                out_pattern = folder / f"out_{original_name}_%03d.mp4"
+                out_pattern = output_dir / f"out_{original_name}_%03d.mp4"
                 split_video(video, out_pattern, args.precise)
 
 if __name__ == "__main__":
