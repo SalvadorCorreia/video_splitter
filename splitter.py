@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 import math
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 # ==========================================
@@ -22,7 +23,7 @@ PRESETS = {
 # ==========================================
 
 def run_ffmpeg(args):
-    command = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"] + args
+    command = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-stats"] + args
     subprocess.run(command, check=True)
 
 def get_video_info(input_path):
@@ -123,22 +124,17 @@ def main():
     
     parser.add_argument("--mode", choices=["continuous", "individual"], required=True, 
                         help="Processing mode.")
-    
     parser.add_argument("--split", choices=["range", "n-chunk", "time-constraint", "size"], 
                         help="Splitting method.\n"
                              "range: args = START END (e.g. 00:01 00:02)\n"
                              "n-chunk: args = N\n"
                              "time-constraint: args = SECONDS\n"
                              "size: args = MB")
-    
     parser.add_argument("--split-val", nargs="+", help="Values for the chosen split method.")
-    
     parser.add_argument("--media", choices=["audio", "video", "all"], default="all", 
                         help="Extract specific media track.")
-    
     parser.add_argument("--preset", choices=PRESETS.keys(), 
                         help="Apply platform-specific configurations.")
-    
     parser.add_argument("--files", nargs="+", help="Specific files to process in raw_videos.")
     parser.add_argument("--precise", action="store_true", help="Re-encode for exact cuts.")
     
@@ -153,8 +149,13 @@ def main():
             parser.error(f"--split {args.split} requires one numeric value.")
 
     input_dir = Path("raw_videos")
-    output_dir = Path("split_videos")
+    base_output_dir = Path("split_videos")
     input_dir.mkdir(exist_ok=True)
+    base_output_dir.mkdir(exist_ok=True)
+
+    # Create timestamped run folder
+    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = base_output_dir / f"run_{run_timestamp}"
     output_dir.mkdir(exist_ok=True)
 
     if args.files:
@@ -166,28 +167,45 @@ def main():
         print("No valid mp4 files found in raw_videos.")
         return
 
+    print(f"\n--- Video Splitting Suite ---")
+    print(f"Mode: {args.mode.capitalize()}")
+    print(f"Output Directory: {output_dir}")
+    if args.preset:
+        print(f"Preset Applied: {args.preset}")
+    elif args.split:
+        print(f"Split Method: {args.split} (Values: {args.split_val})")
+    
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir_path = Path(temp_dir)
         working_videos = videos
 
         if args.preset:
+            print("\nApplying presets...")
             working_videos = []
-            for video in videos:
+            for i, video in enumerate(videos, 1):
+                print(f"[{i}/{len(videos)}] Normalizing {video.name}...")
                 norm_path = temp_dir_path / f"preset_{video.name}"
                 apply_preset(video, norm_path, args.preset)
                 working_videos.append(norm_path)
 
         if args.mode == "continuous":
+            print("\nMerging videos into a continuous stream...")
             merged_path = temp_dir_path / "merged.mp4"
             out_pattern = output_dir / "out_continuous_%03d.mp4"
             concat_videos(working_videos, merged_path)
+            
+            print("Splitting continuous stream...")
             process_video(merged_path, out_pattern, args)
 
         elif args.mode == "individual":
-            for i, video in enumerate(working_videos):
-                original_name = videos[i].stem
-                out_pattern = output_dir / f"out_{original_name}_%03d.mp4"
+            print("\nProcessing individual videos...")
+            for i, video in enumerate(working_videos, 1):
+                original_name = videos[i-1].stem
+                print(f"[{i}/{len(working_videos)}] Splitting {original_name}.mp4...")
+                out_pattern = output_dir / f"{original_name}_%03d.mp4"
                 process_video(video, out_pattern, args)
+
+    print("\nExecution complete.")
 
 if __name__ == "__main__":
     main()
