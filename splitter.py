@@ -2,25 +2,19 @@ import argparse
 import subprocess
 import tempfile
 import math
-import json
+import shutil
 from pathlib import Path
 
 # ==========================================
-# CONFIGURATION & PRESETS
+# PRESETS
 # ==========================================
 
-# Easy to update size and time limits
-LIMITS = {
-    "discord_free_mb": 25,
-    "discord_nitro_mb": 500,
-    "default_chunk_duration": 60
-}
-
-# Platform-specific presets (resolution, fps, max duration in seconds)
 PRESETS = {
     "ig_reel": {"vf": "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2", "fps": 30, "duration": 60},
     "tiktok": {"vf": "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2", "fps": 30, "duration": 180},
-    "yt_short": {"vf": "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2", "fps": 30, "duration": 60}
+    "yt_short": {"vf": "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2", "fps": 30, "duration": 60},
+    "discord_free": {"size_mb": 25},
+    "discord_nitro": {"size_mb": 500}
 }
 
 # ==========================================
@@ -41,7 +35,8 @@ def get_video_info(input_path):
 
 def apply_preset(input_path, output_path, preset_name):
     settings = PRESETS.get(preset_name)
-    if not settings:
+    if not settings or "vf" not in settings:
+        shutil.copy(input_path, output_path)
         return
     
     vf = f"{settings['vf']},fps={settings['fps']},setsar=1"
@@ -68,37 +63,39 @@ def process_video(input_path, output_pattern, args):
     duration, bitrate = get_video_info(input_path)
     ffmpeg_args = ["-i", str(input_path)]
 
-    # Media Separation Category
-    if args.audio_only:
+    if args.media == "audio":
         ffmpeg_args.extend(["-vn", "-c:a", "copy"])
         output_pattern = str(output_pattern).replace(".mp4", ".aac")
-    elif args.video_only:
+    elif args.media == "video":
         ffmpeg_args.extend(["-an", "-c:v", "copy"])
     else:
-        # Default behavior: re-encode for precision or copy
         if args.precise:
             ffmpeg_args.extend(["-c:v", "libx264", "-c:a", "aac"])
         else:
             ffmpeg_args.extend(["-c", "copy"])
 
-    # Splitting Methods Category
-    if args.time_range:
-        start, end = args.time_range
+    if args.split == "range":
+        start, end = args.split_val
         ffmpeg_args.extend(["-ss", start, "-to", end, str(output_pattern).replace("_%03d", "")])
         run_ffmpeg(ffmpeg_args)
         return
 
-    segment_time = LIMITS["default_chunk_duration"]
+    segment_time = 60
 
     if args.preset:
-        segment_time = PRESETS[args.preset]["duration"]
-    elif args.n_chunk:
-        segment_time = duration / args.n_chunk
-    elif args.time_constraint:
-        chunks = math.ceil(duration / args.time_constraint)
+        preset = PRESETS[args.preset]
+        if "duration" in preset:
+            segment_time = preset["duration"]
+        elif "size_mb" in preset:
+            target_size_bits = preset["size_mb"] * 1024 * 1024 * 8
+            segment_time = target_size_bits / bitrate
+    elif args.split == "n-chunk":
+        segment_time = duration / int(args.split_val[0])
+    elif args.split == "time-constraint":
+        chunks = math.ceil(duration / int(args.split_val[0]))
         segment_time = duration / chunks
-    elif args.size_limit:
-        target_size_bits = args.size_limit * 1024 * 1024 * 8
+    elif args.split == "size":
+        target_size_bits = float(args.split_val[0]) * 1024 * 1024 * 8
         segment_time = target_size_bits / bitrate
 
     if args.precise:
@@ -119,35 +116,41 @@ def process_video(input_path, output_pattern, args):
 # ==========================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Video Splitting Suite")
+    parser = argparse.ArgumentParser(
+        description="Video Splitting Suite",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
     
-    # Category 1: Processing Mode
-    mode_group = parser.add_mutually_exclusive_group(required=True)
-    mode_group.add_argument("--continuous", action="store_true", help="Merge selected videos, then split.")
-    mode_group.add_argument("--individual", action="store_true", help="Split selected videos individually.")
+    parser.add_argument("--mode", choices=["continuous", "individual"], required=True, 
+                        help="Processing mode.")
     
-    # Category 2: Splitting Methods
-    split_group = parser.add_mutually_exclusive_group()
-    split_group.add_argument("--time-range", nargs=2, metavar=('START', 'END'), help="Extract a specific section (e.g., 00:01:00 00:02:30).")
-    split_group.add_argument("--n-chunk", type=int, help="Divide video into N equal parts.")
-    split_group.add_argument("--time-constraint", type=int, help="Evenly split video so no chunk exceeds this duration in seconds.")
-    split_group.add_argument("--size-limit", type=int, help="Split video into chunks of this size in MB.")
+    parser.add_argument("--split", choices=["range", "n-chunk", "time-constraint", "size"], 
+                        help="Splitting method.\n"
+                             "range: args = START END (e.g. 00:01 00:02)\n"
+                             "n-chunk: args = N\n"
+                             "time-constraint: args = SECONDS\n"
+                             "size: args = MB")
     
-    # Category 3: Media Separation
-    media_group = parser.add_mutually_exclusive_group()
-    media_group.add_argument("--audio-only", action="store_true", help="Extract only the audio track.")
-    media_group.add_argument("--video-only", action="store_true", help="Extract only the video track.")
+    parser.add_argument("--split-val", nargs="+", help="Values for the chosen split method.")
     
-    # Category 4: Presets & Normalization
-    preset_group = parser.add_mutually_exclusive_group()
-    preset_group.add_argument("--preset", choices=PRESETS.keys(), help="Apply a platform-specific preset.")
-    preset_group.add_argument("--normalize", action="store_true", help="Standardize resolution and framerate to basic 1080p.")
+    parser.add_argument("--media", choices=["audio", "video", "all"], default="all", 
+                        help="Extract specific media track.")
     
-    # Global Modifiers
+    parser.add_argument("--preset", choices=PRESETS.keys(), 
+                        help="Apply platform-specific configurations.")
+    
     parser.add_argument("--files", nargs="+", help="Specific files to process in raw_videos.")
     parser.add_argument("--precise", action="store_true", help="Re-encode for exact cuts.")
     
     args = parser.parse_args()
+
+    if args.split:
+        if not args.split_val:
+            parser.error("--split requires --split-val.")
+        if args.split == "range" and len(args.split_val) != 2:
+            parser.error("--split range requires two values: START END.")
+        if args.split in ["n-chunk", "time-constraint", "size"] and len(args.split_val) != 1:
+            parser.error(f"--split {args.split} requires one numeric value.")
 
     input_dir = Path("raw_videos")
     output_dir = Path("split_videos")
@@ -155,7 +158,7 @@ def main():
     output_dir.mkdir(exist_ok=True)
 
     if args.files:
-        videos = [input_dir / f for f in args.files if (input_dir / f).exists()]
+        videos = [input_dir / Path(f).name for f in args.files if (input_dir / Path(f).name).exists()]
     else:
         videos = sorted(list(input_dir.glob("*.mp4")))
 
@@ -167,23 +170,20 @@ def main():
         temp_dir_path = Path(temp_dir)
         working_videos = videos
 
-        if args.preset or args.normalize:
+        if args.preset:
             working_videos = []
             for video in videos:
-                norm_path = temp_dir_path / f"norm_{video.name}"
-                if args.preset:
-                    apply_preset(video, norm_path, args.preset)
-                else:
-                    apply_preset(video, norm_path, "ig_reel") # default normalizer
+                norm_path = temp_dir_path / f"preset_{video.name}"
+                apply_preset(video, norm_path, args.preset)
                 working_videos.append(norm_path)
 
-        if args.continuous:
+        if args.mode == "continuous":
             merged_path = temp_dir_path / "merged.mp4"
             out_pattern = output_dir / "out_continuous_%03d.mp4"
             concat_videos(working_videos, merged_path)
             process_video(merged_path, out_pattern, args)
 
-        elif args.individual:
+        elif args.mode == "individual":
             for i, video in enumerate(working_videos):
                 original_name = videos[i].stem
                 out_pattern = output_dir / f"out_{original_name}_%03d.mp4"
