@@ -2,6 +2,6 @@
 raw_videos/*.mp4
 
 # Ignore the output videos
-split_videos/*.mp4
+split_videos/*/*.mp4
 
 venv
