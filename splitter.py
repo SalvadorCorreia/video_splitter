@@ -122,7 +122,7 @@ def main():
         formatter_class=argparse.RawTextHelpFormatter
     )
     
-    parser.add_argument("--mode", choices=["continuous", "individual"], required=True, 
+    parser.add_argument("--mode", choices=["continuous", "individual", "join"], required=True, 
                         help="Processing mode.")
     parser.add_argument("--split", choices=["range", "n-chunk", "time-constraint", "size"], 
                         help="Splitting method.\n"
@@ -140,7 +140,7 @@ def main():
     
     args = parser.parse_args()
 
-    if args.split:
+    if args.mode != "join" and args.split:
         if not args.split_val:
             parser.error("--split requires --split-val.")
         if args.split == "range" and len(args.split_val) != 2:
@@ -153,7 +153,6 @@ def main():
     input_dir.mkdir(exist_ok=True)
     base_output_dir.mkdir(exist_ok=True)
 
-    # Create timestamped run folder
     run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = base_output_dir / f"run_{run_timestamp}"
     output_dir.mkdir(exist_ok=True)
@@ -167,13 +166,15 @@ def main():
         print("No valid mp4 files found in raw_videos.")
         return
 
-    print(f"\n--- Video Splitting Suite ---")
+    print(f"\n--- Video Processing Suite ---")
     print(f"Mode: {args.mode.capitalize()}")
     print(f"Output Directory: {output_dir}")
-    if args.preset:
-        print(f"Preset Applied: {args.preset}")
-    elif args.split:
-        print(f"Split Method: {args.split} (Values: {args.split_val})")
+    
+    if args.mode != "join":
+        if args.preset:
+            print(f"Preset Applied: {args.preset}")
+        elif args.split:
+            print(f"Split Method: {args.split} (Values: {args.split_val})")
     
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir_path = Path(temp_dir)
@@ -188,7 +189,12 @@ def main():
                 apply_preset(video, norm_path, args.preset)
                 working_videos.append(norm_path)
 
-        if args.mode == "continuous":
+        if args.mode == "join":
+            print("\nJoining videos into a single file...")
+            joined_path = output_dir / "joined_output.mp4"
+            concat_videos(working_videos, joined_path)
+            
+        elif args.mode == "continuous":
             print("\nMerging videos into a continuous stream...")
             merged_path = temp_dir_path / "merged.mp4"
             out_pattern = output_dir / "out_continuous_%03d.mp4"
