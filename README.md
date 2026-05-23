@@ -1,6 +1,6 @@
 # Video Splitting Suite
 
-A command-line tool to process, split, and normalize videos.
+A command-line tool to process, split, join, and normalize videos.
 
 ## Setup
 
@@ -13,12 +13,13 @@ A command-line tool to process, split, and normalize videos.
 
 Run the script with the required `--mode` argument and any additional configurations.
 
-`python splitter.py --mode <continuous|individual> [options]`
+`python splitter.py --mode <continuous|individual|join> [options]`
 
 ### Core Options
 
 * `--mode continuous`: Merges all input videos into one stream, then applies the splitting logic.
 * `--mode individual`: Processes and splits each input video separately.
+* `--mode join`: Merges all input videos into a single output file without splitting.
 
 ### Splitting Methods
 
@@ -54,5 +55,5 @@ Split a video into exactly 3 equal parts:
 Process videos to fit Discord's free tier size limit (25MB):
 `python splitter.py --mode individual --preset discord_free`
 
-Merge specific videos and split them into 60-second chunks formatted for Instagram Reels:
-`python splitter.py --mode continuous --preset ig_reel --files clip1.mp4 clip2.mp4`
+Merge specific videos into one single file:
+`python splitter.py --mode join --files clip1.mp4 clip2.mp4`
